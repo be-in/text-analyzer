@@ -16,3 +16,5 @@ To install it, you will need to run this command on the command line:
 > pip install nltk
 
 In the code itself (text_analyzer.py) attempts are being made to download certain NLTK resources (punkt, punkt_tab, stopwords). If these resources are not found, the code tries to download them. Therefore, after installing nltk, it is highly advisable to run the code and wait for the necessary data to be downloaded before attempting to use the program in full. This will prevent LookupError errors during execution.
+
+Оr you can find a similar online service that will be limited in free use, requires a mandatory Internet connection and a fee for its use. :)
