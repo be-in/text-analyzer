@@ -126,12 +126,15 @@ class DuplicateWordFinder(tk.Tk):
         self.fog_index_label = ttk.Label(self, text="Индекс туманности: -")
         self.fog_index_label.grid(row=8, column=0, sticky="w", padx=5, pady=5)
 
-        # Добавляем метки для водности и заспамленности
-        self.water_percentage_label = ttk.Label(self, text="Процент водности: -")
-        self.water_percentage_label.grid(row=9, column=0, sticky="w", padx=5, pady=5)
+        # Добавляем метки для разнообразия, водности и заспамленности
+        self.diversity_percentage_label = ttk.Label(self, text="Процент разнообразия: -")
+        self.diversity_percentage_label.grid(row=9, column=0, sticky="w", padx=5, pady=5)
+
+        self.water_percentage_label = ttk.Label(self, text="Процент стоп слов: -")
+        self.water_percentage_label.grid(row=10, column=0, sticky="w", padx=5, pady=5)
 
         self.spam_percentage_label = ttk.Label(self, text="Процент заспамленности: -")
-        self.spam_percentage_label.grid(row=10, column=0, sticky="w", padx=5, pady=5)
+        self.spam_percentage_label.grid(row=11, column=0, sticky="w", padx=5, pady=5)
 
         # Добавляем фильтр подсветки
         self.highlight_frame = ttk.Frame(self)
@@ -181,10 +184,9 @@ class DuplicateWordFinder(tk.Tk):
         text = re.sub(r'[^\w\s\-]', ' ', text)  # Keep hyphens
         return text
 
-    def calculate_fog_index(self, text):
+    def calculate_fog_index(self, text, words):
         """Рассчитывает индекс туманности Ганнинга."""
         sentences = sent_tokenize(text, language="russian")
-        words = word_tokenize(self.preprocess_text(text), language="russian")
         num_sentences = len(sentences)
         num_words = len(words)
 
@@ -273,24 +275,10 @@ class DuplicateWordFinder(tk.Tk):
         else:
             return "Очень сложно читается. Лучше иметь ученую степень."
 
-    def calculate_water_percentage(self, words):
-        """Вычисляет процент "воды" в тексте."""
-        if not words:
+    def calculate_percentage(self, a, b):
+        if b < 1:
             return 0
-        stop_word_count = sum(1 for word in words if word in self.stop_words)
-        return (stop_word_count / len(words)) * 100
-
-    def calculate_spam_percentage(self, words):
-        """Вычисляет процент заспамленности текста."""
-        if not words:
-            return 0
-
-        # Находим наиболее часто встречающееся слово
-        most_common_word_count = Counter(words).most_common(1)[0][1]
-
-        # Считаем заспамленность как отношение кол-ва самого частого слова к общему числу слов
-        return (most_common_word_count / len(words)) * 100
-
+        return (a / b) * 100
 
     def analyze_text(self):
         text = self.input_text.get("1.0", tk.END)
@@ -299,11 +287,21 @@ class DuplicateWordFinder(tk.Tk):
         self.text_length = max(len(words), 100)
 
         stemmed_words = [self.stemmer.stem(word) for word in words]
+        stemmed_stop_words = set([self.stemmer.stem(word) for word in self.stop_words])
 
         self.word_info = {}  # Очищаем word_info перед заполнением
+        unique_count = 0
+        stop_count = 0
+        max_frec = 0
         for stemmed_word in set(stemmed_words):  # Итерируем по уникальным стеммированным словам
             wcount = stemmed_words.count(stemmed_word)
-            is_stop_word = stemmed_word in self.stop_words
+            is_stop_word = stemmed_word in stemmed_stop_words
+            if wcount == 1:  # считаем уникальные слова
+                unique_count = unique_count + 1
+            if is_stop_word:  # считаем стоп слова
+                stop_count = stop_count + wcount
+            elif max_frec < wcount:
+                max_frec = wcount
             if (wcount > 1 or is_stop_word):
                 self.word_info[stemmed_word] = WordInfo(
                     count = wcount,
@@ -347,16 +345,26 @@ class DuplicateWordFinder(tk.Tk):
 
         # Рассчитываем индекс удобочитаемости и обновляем метку
         easy_index = self.calculate_flesch_index(text)
-        self.easy_index_label.config(
-            text=f"Индекс удобочитаемости: {easy_index:.2f} - " + self.help_flesch(easy_index))
+        self.easy_index_label.config(text=f"Индекс удобочитаемости: {easy_index:.2f} - " + self.help_flesch(easy_index))
 
         # Рассчитываем индекс туманности и обновляем метку
-        fog_index = self.calculate_fog_index(text)
+        fog_index = self.calculate_fog_index(text, words)
         self.fog_index_label.config(text=f"Индекс туманности: {fog_index:.2f} - " + self.help_fog_index(fog_index))
 
+        # Рассчитываем и выводим процент разнообразия
+        diversity_percentage = self.calculate_percentage(unique_count, len(words) - stop_count)
+        diversity_text = f"Процент разнообразия: {diversity_percentage:.2f}% - "
+        if diversity_percentage < 30:
+            diversity_text += "Низкое разнообразие слов."
+        elif diversity_percentage < 60:
+            diversity_text += "Среднее разнообразие слов."
+        else:
+            diversity_text += "Достаточное разнообразие слов."
+        self.diversity_percentage_label.config(text=diversity_text)
+
         # Рассчитываем и выводим процент водности
-        water_percentage = self.calculate_water_percentage(words)
-        water_text = f"Процент водности: {water_percentage:.2f}% - "
+        water_percentage = self.calculate_percentage(stop_count, len(words))
+        water_text = f"Процент стоп слов: {water_percentage:.2f}% - "
         if water_percentage < 15:
             water_text += "Естественное содержание «воды»."
         elif water_percentage < 30:
@@ -366,7 +374,7 @@ class DuplicateWordFinder(tk.Tk):
         self.water_percentage_label.config(text=water_text)
 
         # Рассчитываем и выводим процент заспамленности
-        spam_percentage = self.calculate_spam_percentage(stemmed_words)
+        spam_percentage = self.calculate_percentage(max_frec, len(words) - stop_count)
         spam_text = f"Процент заспамленности: {spam_percentage:.2f}% - "
         if spam_percentage < 30:
             spam_text += "Естественное содержание ключевых слов."
