@@ -1,4 +1,4 @@
-# text-analyzer
+# Text analyzer
 A Python application for analyzing handwritten text in Russian.
 
 The simple interface allows you to paste text from the clipboard. After the analysis, statistics of repeated words and other indicators are displayed:
