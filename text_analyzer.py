@@ -45,6 +45,7 @@ class DuplicateWordFinder(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Анализатор текста")
+        self.state("zoomed")
 
         # Словари и переменные
         self.highlight_mode = HighlightMode(repeat_word = True, stop_word = True)
@@ -232,29 +233,29 @@ class DuplicateWordFinder(tk.Tk):
     def calculate_flesch_index(self, text, russian_adaptation=True):
         """Вычисляет индекс удобочитаемости Флеша."""
         sentences = sent_tokenize(text, language="russian")
-        words = word_tokenize(text, language="russian")
-        # Исключить знаки препинания
-        words = [word for word in words if word.isalnum()]
+        total_words = 0
+        total_syllables = 0
 
-        num_sentences = len(sentences)
-        num_words = len(words)
-
-        if num_sentences == 0 or num_words == 0:
+        for sentence in sentences:
+            words = word_tokenize(sentence, language="russian")
+            total_words += len(words)
+            for word in words:
+                total_syllables += self.count_syllables(word)
+        if len(sentences) == 0 or total_words == 0:
             return 100  # Возвращаем 100 для пустого текста (очень простой)
 
-        total_syllables = sum(self.count_syllables(word) for word in words)
-
-        asl = num_words / num_sentences
-        asw = total_syllables / num_words
+        asl = total_words / len(sentences)
+        asw = total_syllables / total_words
         if russian_adaptation:
             # Адаптация Мирошниченко
-            fre = 208.7 - (1.52 * asl) - (65.14 * asw)
+            # flesch_index = 208.7 - (1.52 * asl) - (65.14 * asw)
+            flesch_index = 206.835 - (1.3 * asl) - (60.1 * asw)
         else:
-            fre = 206.835 - (1.015 * asl) - (84.6 * asw)
+            flesch_index = 206.835 - (1.015 * asl) - (84.6 * asw)
 
         # Ограничиваем FRE в пределах [0, 100]
-        fre = max(0, min(fre, 100))
-        return fre
+        flesch_index = max(0, min(flesch_index, 100))
+        return flesch_index
 
     def help_flesch(self, score):
         if score >= 90:
@@ -279,15 +280,13 @@ class DuplicateWordFinder(tk.Tk):
         stop_word_count = sum(1 for word in words if word in self.stop_words)
         return (stop_word_count / len(words)) * 100
 
-    def calculate_spam_percentage(self, words, word_counts):
+    def calculate_spam_percentage(self, words):
         """Вычисляет процент заспамленности текста."""
         if not words:
             return 0
 
         # Находим наиболее часто встречающееся слово
-        if not word_counts:  # Handle empty word_counts
-            return 0
-        most_common_word_count = max(word_counts.values())
+        most_common_word_count = Counter(words).most_common(1)[0][1]
 
         # Считаем заспамленность как отношение кол-ва самого частого слова к общему числу слов
         return (most_common_word_count / len(words)) * 100
@@ -367,7 +366,7 @@ class DuplicateWordFinder(tk.Tk):
         self.water_percentage_label.config(text=water_text)
 
         # Рассчитываем и выводим процент заспамленности
-        spam_percentage = self.calculate_spam_percentage(words, {k:v.min_distance for k, v in self.word_info.items()})
+        spam_percentage = self.calculate_spam_percentage(stemmed_words)
         spam_text = f"Процент заспамленности: {spam_percentage:.2f}% - "
         if spam_percentage < 30:
             spam_text += "Естественное содержание ключевых слов."
@@ -376,7 +375,6 @@ class DuplicateWordFinder(tk.Tk):
         else:
             spam_text += "Сильно оптимизированный или заспамленный текст."
         self.spam_percentage_label.config(text=spam_text)
-
 
         self.sort_results("count")  # Сортируем по умолчанию по частоте
         self.update_highlight()  # Подсвечиваем все слова при анализе
