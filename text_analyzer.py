@@ -1,11 +1,13 @@
 import tkinter as tk
-from tkinter import ttk
+import nltk
+import logging
 import re
+
+from tkinter import ttk
 from nltk.stem import SnowballStemmer
 from nltk.tokenize import word_tokenize, sent_tokenize
 from collections import Counter
-import nltk
-import logging
+from dataclasses import dataclass
 
 logging.basicConfig(level=logging.INFO)
 
@@ -27,16 +29,27 @@ except LookupError:
     logging.info("Downloading necessary stopwords data...")
     nltk.download('stopwords')
 
+@dataclass
+class WordInfo:
+    count: int
+    min_distance: int
+    is_stopword: bool
+
+@dataclass
+class HighlightMode:
+    repeat_word: bool
+    stop_word: bool
+
 class DuplicateWordFinder(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("Поиск повторяющихся слов")
+        self.title("Анализатор текста")
 
-        # Словари
-        self.text_length = 100  # Длина текста для нормировки
-        self.word_counts = {}
-        self.word_min_distances = {}  # Добавляем словарь для хранения минимальных расстояний
+        # Словари и переменные
+        self.highlight_mode = HighlightMode(repeat_word = True, stop_word = True)
+        self.text_length = 100   # Минимальная длина текста для нормировки
+        self.word_info = {}      # Добавляем словарь для хранения информации о словах
         self.sorted_words = []
 
         # Стоп-слова (можно расширить)
@@ -96,28 +109,40 @@ class DuplicateWordFinder(tk.Tk):
 
         # Добавляем метки для статистики
         self.char_count_label = ttk.Label(self, text="Кол-во символов с пробелами: -")
-        self.char_count_label.grid(row=4, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.char_count_label.grid(row=4, column=0, sticky="w", padx=5, pady=5)
 
         self.char_count_no_spaces_label = ttk.Label(self, text="Кол-во символов без пробелов: -")
-        self.char_count_no_spaces_label.grid(row=5, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.char_count_no_spaces_label.grid(row=5, column=0, sticky="w", padx=5, pady=5)
 
         self.word_count_label = ttk.Label(self, text="Кол-во слов: -")
-        self.word_count_label.grid(row=6, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.word_count_label.grid(row=6, column=0, sticky="w", padx=5, pady=5)
 
         # Добавляем метку для отображения индекса удобочитаемости
         self.easy_index_label = ttk.Label(self, text="Индекс удобочитаемости: -")
-        self.easy_index_label.grid(row=7, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.easy_index_label.grid(row=7, column=0, sticky="w", padx=5, pady=5)
 
         # Добавляем метку для отображения индекса туманности
         self.fog_index_label = ttk.Label(self, text="Индекс туманности: -")
-        self.fog_index_label.grid(row=8, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.fog_index_label.grid(row=8, column=0, sticky="w", padx=5, pady=5)
 
         # Добавляем метки для водности и заспамленности
         self.water_percentage_label = ttk.Label(self, text="Процент водности: -")
-        self.water_percentage_label.grid(row=9, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.water_percentage_label.grid(row=9, column=0, sticky="w", padx=5, pady=5)
 
         self.spam_percentage_label = ttk.Label(self, text="Процент заспамленности: -")
-        self.spam_percentage_label.grid(row=10, column=0, columnspan=2, sticky="w", padx=5, pady=5)
+        self.spam_percentage_label.grid(row=10, column=0, sticky="w", padx=5, pady=5)
+
+        # Добавляем фильтр подсветки
+        self.highlight_frame = ttk.Frame(self)
+        self.highlight_frame.grid(row=4, column=1, rowspan=7, sticky="ne", padx=5, pady=5) # Размещаем справа от статистики
+
+        self.repeat_word_var = tk.BooleanVar(value=True)
+        self.repeat_word_check = ttk.Checkbutton(self.highlight_frame, text="Повторы", variable=self.repeat_word_var, command=self.update_highlight_options)
+        self.repeat_word_check.pack(anchor="w")
+
+        self.stop_word_var = tk.BooleanVar(value=True)
+        self.stop_word_check = ttk.Checkbutton(self.highlight_frame, text="Стоп-слова", variable=self.stop_word_var, command=self.update_highlight_options)
+        self.stop_word_check.pack(anchor="w")
 
         # Меню
         self.menu_bar = tk.Menu(self)
@@ -134,7 +159,7 @@ class DuplicateWordFinder(tk.Tk):
         self.bind_all("<KeyPress>", self.key_event_handler, add="+")
 
     def key_event_handler(self, event):
-        if event.keysym != "??":  # Check if keysym is a valid character
+        if event.keysym != "??":  # Исключаем дублированную обработку события
             return
 
         command_pressed = (event.state & 0x100) != 0  # (macOS)
@@ -247,7 +272,6 @@ class DuplicateWordFinder(tk.Tk):
         else:
             return "Очень сложно читается. Лучше иметь ученую степень."
 
-
     def calculate_water_percentage(self, words):
         """Вычисляет процент "воды" в тексте."""
         if not words:
@@ -265,22 +289,28 @@ class DuplicateWordFinder(tk.Tk):
             return 0
         most_common_word_count = max(word_counts.values())
 
-
         # Считаем заспамленность как отношение кол-ва самого частого слова к общему числу слов
         return (most_common_word_count / len(words)) * 100
-
 
 
     def analyze_text(self):
         text = self.input_text.get("1.0", tk.END)
         processed_text = self.preprocess_text(text)
-        words = word_tokenize(processed_text, language="russian")  # Tokenize with language
+        words = word_tokenize(processed_text, language="russian")  # Токенизация по языку
         self.text_length = max(len(words), 100)
 
         stemmed_words = [self.stemmer.stem(word) for word in words]
-        self.word_counts = Counter(stemmed_words)
-        # Keep only words that occur more than once *after* stemming
-        self.word_counts = {word: count for word, count in self.word_counts.items() if count > 1}
+
+        self.word_info = {}  # Очищаем word_info перед заполнением
+        for stemmed_word in set(stemmed_words):  # Итерируем по уникальным стеммированным словам
+            wcount = stemmed_words.count(stemmed_word)
+            is_stop_word = stemmed_word in self.stop_words
+            if (wcount > 1 or is_stop_word):
+                self.word_info[stemmed_word] = WordInfo(
+                    count = wcount,
+                    min_distance = self.text_length,  # Инициализируем максимальным значением
+                    is_stopword = is_stop_word
+                )
 
         # Удаляем все теги подсветки
         for tag in self.input_text.tag_names():
@@ -290,9 +320,9 @@ class DuplicateWordFinder(tk.Tk):
         char_index = 0
         for i, word in enumerate(words):
             # Находим позицию слова в исходном тексте
-            char_index = processed_text.find(word, char_index) # Find in *processed* text
+            char_index = processed_text.find(word, char_index)
             stemmed_word = stemmed_words[i]
-            if stemmed_word in self.word_counts:
+            if stemmed_word in self.word_info:
                 if stemmed_word not in word_positions:
                     word_positions[stemmed_word] = []
                 # Добавляем и номер слова, и позицию в тексте
@@ -301,17 +331,14 @@ class DuplicateWordFinder(tk.Tk):
             char_index += len(word)  # Обновляем индекс для следующего поиска
 
         # Вычисляем минимальные расстояния для каждого слова
-        self.word_min_distances = {}
-        for word, positions in word_positions.items():
+        for stemmed_word, positions in word_positions.items():
             if len(positions) > 1:
                 min_dist = float('inf')
                 for i in range(len(positions) - 1):
                     # Используем номера слов для расчета расстояния
                     distance = positions[i + 1] - positions[i]
                     min_dist = min(min_dist, distance)
-                self.word_min_distances[word] = min_dist
-            else:
-                self.word_min_distances[word] = self.text_length  # Если слово встречается только один раз
+                self.word_info[stemmed_word].min_distance = min_dist
 
         # Обновляем статистику
         self.char_count_label.config(text=f"Кол-во символов с пробелами: {len(text)}")
@@ -340,7 +367,7 @@ class DuplicateWordFinder(tk.Tk):
         self.water_percentage_label.config(text=water_text)
 
         # Рассчитываем и выводим процент заспамленности
-        spam_percentage = self.calculate_spam_percentage(words, self.word_counts)
+        spam_percentage = self.calculate_spam_percentage(words, {k:v.min_distance for k, v in self.word_info.items()})
         spam_text = f"Процент заспамленности: {spam_percentage:.2f}% - "
         if spam_percentage < 30:
             spam_text += "Естественное содержание ключевых слов."
@@ -352,19 +379,18 @@ class DuplicateWordFinder(tk.Tk):
 
 
         self.sort_results("count")  # Сортируем по умолчанию по частоте
-        self.highlight()  # Подсвечиваем все слова при анализе
+        self.update_highlight()  # Подсвечиваем все слова при анализе
 
     def sort_results(self, sort_type):
         if sort_type == "count":
-            self.sorted_words = sorted(self.word_counts.items(), key=lambda item: item[1], reverse=True)
+            self.sorted_words = sorted(self.word_info.items(), key=lambda item: item[1].count, reverse=True)
         elif sort_type == "distance":
             # Сортируем по минимальному расстоянию, затем по частоте (если расстояния равны)
-            self.sorted_words = sorted(self.word_counts.items(),
-                                       key=lambda item: (self.word_min_distances[item[0]], -item[1]))
+            self.sorted_words = sorted(self.word_info.items(), key=lambda item: (item[1].min_distance, -item[1].count))
 
         self.output_listbox.delete(0, tk.END)  # Очистка списка
-        for word, count in self.sorted_words:
-            self.output_listbox.insert(tk.END, f"{word}: {count}")  # Добавление элемента
+        for word, info in self.sorted_words:
+            self.output_listbox.insert(tk.END, f"{word}: {info.count}")  # Добавление элемента
 
     def get_clicked_word(self, event=None):
         if not event:
@@ -377,9 +403,9 @@ class DuplicateWordFinder(tk.Tk):
         if not (start_char >= 0 and start_char < len(text)):
             return ""
         end_char = start_char
-        while start_char > 0 and (text[start_char - 1].isalnum() or text[start_char - 1] == "_"):
+        while start_char > 0 and (text[start_char - 1].isalnum() or text[start_char - 1] == "_" or text[start_char - 1] == "-"):
             start_char -= 1
-        while end_char < len(text) and (text[end_char].isalnum() or text[end_char] == "_"):
+        while end_char < len(text) and (text[end_char].isalnum() or text[end_char] == "_" or text[end_char] == "-"):
             end_char += 1
         return self.stemmer.stem(text[start_char:end_char])
 
@@ -401,39 +427,52 @@ class DuplicateWordFinder(tk.Tk):
                         self.output_listbox.see(i)  # Прокручиваем к выделенному элементу
                         break
 
-            if selected_word in self.word_min_distances:
-                self.highlight(selected_word)
+            if selected_word in self.word_info:
+                self.update_highlight(selected_word)
         else:
-            self.highlight()
+            self.update_highlight()
 
     def calculate_intensity(self, word):
         # Рассчитываем интенсивность на основе минимального расстояния
-        min_distance = self.word_min_distances.get(word, self.text_length)
+        min_distance = self.word_info.get(word, WordInfo(0,self.text_length,False)).min_distance
         if min_distance == self.text_length:
-            normalized_intensity = 0  # если одно вхождение
+            normalized_intensity = 255  # если одно вхождение
         else:
             normalized_intensity = int((1.0 - (1.0 - min_distance / self.text_length) ** 2) * 32)  # нормализация
             normalized_intensity = max(1, min(normalized_intensity * 8, 255))  # ограничение
         return normalized_intensity
 
-    def highlight(self, select_word=""):
-        for word in self.word_min_distances.keys():
+    def update_highlight(self, select_word=""):
+        for word, values in self.word_info.items():
             intensity = self.calculate_intensity(word)
             if word == select_word:
                 hex_color = self.get_mark(intensity)
+            elif (values.is_stopword and self.highlight_mode.stop_word):
+                hex_color = self.get_stop(intensity)
+            elif self.highlight_mode.repeat_word:
+                hex_color = self.get_repeat(intensity)
             else:
-                hex_color = self.get_color(intensity)
+                hex_color = "#FFFFFF"
             self.input_text.tag_config(word, background=hex_color)
 
-    def get_color(self, intensity):
-        color_b = min(int(128 + (intensity * 0.5)), 255)
-        color_r = min(int(128 + (intensity * 0.5)), 255)
-        return f"#FF{color_r:02x}{color_b:02x}"
+    def update_highlight_options(self):
+        self.highlight_mode.repeat_word = self.repeat_word_var.get()
+        self.highlight_mode.stop_word = self.stop_word_var.get()
+        self.update_highlight()
 
-    def get_mark(self, intensity):
-        color_b = min(int(64 + (intensity * 0.75)), 255)
-        color_r = min(int(196 + (intensity * 0.25)), 255)
-        return f"#FF{color_r:02x}{color_b:02x}"
+    def get_stop(self, intensity):  # подсветка стоп слов
+        color_r = min(64 + int(intensity * 0.4), 255)
+        color_g = min(218 + int(intensity * 0.15), 255)
+        return f"#{color_r:02x}{color_g:02x}FF"
+
+    def get_repeat(self, intensity):  # подсветка повторяющихся слов
+        color = min(154 + int(intensity * 0.4), 255)
+        return f"#FF{color:02x}{color:02x}"
+
+    def get_mark(self, intensity):  # подсветка выбранного слова
+        color_b = min(64 + int(intensity * 0.5), 255)
+        color_r = min(196 + int(intensity * 0.2), 255)
+        return f"#{color_r:02x}FF{color_b:02x}"
 
     def paste_text(self, event=None):
         try:
